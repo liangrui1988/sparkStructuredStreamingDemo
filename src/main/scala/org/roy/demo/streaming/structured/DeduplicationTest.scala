@@ -1,14 +1,13 @@
-package streaming.structured
+package org.roy.demo.streaming.structured
 
 import java.sql.Timestamp
-import java.util.Calendar
 
-import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions._
-import streaming.StreamingExamples
 import org.apache.log4j.{Level, Logger}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions.window
+import streaming.StreamingExamples
 
-object WindowOperationsTest {
+object DeduplicationTest {
   Logger.getLogger("org.apache.spark").setLevel(Level.WARN)
 
   def main(args: Array[String]): Unit = {
@@ -26,35 +25,41 @@ object WindowOperationsTest {
       .format("socket")
       .option("host", "10.200.102.192")
       .option("port", 9998)
-      //      .option("includeTimestamp", true)
+      .option("includeTimestamp", true)
       .load()
-      .withColumn("current_timestamp", current_timestamp)
-
     import spark.implicits._
     // Split the lines into words
     //    val words = lines.as[String].flatMap(_.split(" "))
     // Split the lines into words, retaining timestamps
-    //    Calendar.getInstance().getTime
-    //    val ts = new Timestamp(System.currentTimeMillis())
     val words = lines.as[(String, Timestamp)].flatMap(line =>
       line._1.split(" ").map(word => (word, line._2))
     ).toDF("word", "timestamp")
 
-    // Group the data by window and word and compute the count of each group
-    //接这个数据的时间，5分钟内的，每1分钟进行分组，
-    val windowedCounts = words.
-      withWatermark("timestamp", "5 minutes") //这意味着系统需要知道旧的聚合何时可以从内存状态中删除，因为应用程序将不再接收该聚合的最新数据
-      .groupBy(
-      window($"timestamp", "5 minutes", "1 minutes"),
-      $"word"
-    ).count()
 
-    val query = windowedCounts.writeStream
+    // Without watermark using guid column  全部干掉重复的
+    words.dropDuplicates("guid")
+
+    // With watermark using guid and eventTime columns  在这个时间范围里，干掉重复的
+    words
+      .withWatermark("eventTime", "10 seconds")
+      .dropDuplicates("guid", "eventTime")
+
+    val query = words.writeStream
       .outputMode("complete")
       .format("console")
       .start()
 
+
+//    // Group the data by window and word and compute the count of each group
+//    val windowedCounts = words.
+//      //我们引入了水印，它允许引擎自动跟踪数据中的当前事件时间，并尝试相应地清理旧状态
+//      withWatermark("timestamp", "10 minutes").
+//      groupBy(
+//        window($"timestamp", "10 minutes", "5 minutes"),
+//        $"word"
+//      ).count()
+
+
     query.awaitTermination()
   }
-
 }
