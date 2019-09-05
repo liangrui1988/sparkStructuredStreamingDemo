@@ -4,86 +4,83 @@ import org.apache.spark.sql.SparkSession
 
 object WithStateTest {
 
+
+  import java.sql.Timestamp
+
+  type DeviceId = Long
+  case class Signal(timestamp: Timestamp, deviceId: DeviceId, value: Long)
+  case class EventsCounted(deviceId: DeviceId, count: Long)
+  import org.apache.spark.sql.streaming.GroupState
+  type Key = Int
+  type Count = Long
+  type State = Map[Key, Count]
+
+  def countValuesPerDevice(
+                            deviceId: Int,
+                            signals: Iterator[Signal],
+                            state: GroupState[State]): Iterator[EventsCounted] = {
+    val values = signals.toSeq
+    println(s"Device: $deviceId")
+    println(s"Signals (${values.size}):")
+    values.zipWithIndex.foreach { case (v, idx) => println(s"$idx. $v") }
+    println(s"State: $state")
+
+    // update the state with the count of elements for the key
+    val initialState: State = Map(deviceId -> 0)
+    val oldState = state.getOption.getOrElse(initialState)
+    // the name to highlight that the state is for the key only
+    val newValue = oldState(deviceId) + values.size
+    val newState = Map(deviceId -> newValue)
+    state.update(newState)
+
+    // you must not return as it's already consumed
+    // that leads to a very subtle error where no elements are in an iterator
+    // iterators are one-pass data structures
+    Iterator(EventsCounted(deviceId, newValue))
+  }
+
+
   def main(args: Array[String]): Unit = {
-//    val spark = SparkSession
-//      .builder
-//      .master("local[*]")
-//      .appName("StructuredNetworkWordCount")
-//      .getOrCreate()
-//    import spark.implicits._
+    val spark = SparkSession
+      .builder
+      .master("local[*]")
+      .appName("Deduplication2Test")
+      .getOrCreate()
+    import spark.implicits._
+
+
+    // input stream
+    import org.apache.spark.sql.functions._
+    val signals = spark
+      .readStream
+      .format("rate")
+      .option("rowsPerSecond", 1)
+      .load
+      .withColumn("deviceId", rint(rand() * 10) cast "int") // 10 devices randomly assigned to values
+      .withColumn("value", $"value" % 10) // randomize the values (just for fun)
+      .as[Signal] // convert to our type (from "unpleasant" Row)
+
+
+    // stream processing using flatMapGroupsWithState operator
+    val deviceId: Signal => DeviceId = {
+      case Signal(_, deviceId, _) => deviceId
+    }
+    val signalsByDevice = signals.groupByKey(deviceId)
+
+//    import org.apache.spark.sql.streaming.{GroupStateTimeout, OutputMode}
+//    val signalCounter = signalsByDevice.flatMapGroupsWithState(
+//      outputMode = OutputMode.Append,
+//      timeoutConf = GroupStateTimeout.NoTimeout)(countValuesPerDevice)
 //
-//    // Change the path to match your configuration
-//    val checkpointRootLocation = "/tmp/checkpoint-watermark_demo/state"
-//    val version = 1L
-//
-//    import org.apache.spark.sql.execution.streaming.state.StateStoreId
-//    val storeId = StateStoreId(
-//      checkpointRootLocation,
-//      operatorId = 0,
-//      partitionId = 0)
-//
-//    // The key and value schemas should match the watermark demo
-//    // .groupBy(window($"time", windowDuration.toString) as "sliding_window")
-//    import org.apache.spark.sql.types.{TimestampType, StructField, StructType}
-//    val keySchema = StructType(
-//      StructField("sliding_window",
-//        StructType(
-//          StructField("start", TimestampType, nullable = true) ::
-//            StructField("end", TimestampType, nullable = true) :: Nil),
-//        nullable = false) :: Nil)
-//
-//
-//    // .agg(collect_list("batch") as "batches", collect_list("value") as "values")
-//    import org.apache.spark.sql.types.{ArrayType, LongType}
-//    val valueSchema = StructType(
-//      StructField("batches", ArrayType(LongType, true), true) ::
-//        StructField("values", ArrayType(LongType, true), true) :: Nil)
-//
-//
-//    val indexOrdinal = None
-//    import org.apache.spark.sql.execution.streaming.state.StateStoreConf
-//    val storeConf = StateStoreConf(spark.sessionState.conf)
-//    val hadoopConf = spark.sessionState.newHadoopConf()
-//    import org.apache.spark.sql.execution.streaming.state.StateStoreProvider
-//    val provider = StateStoreProvider.createAndInit(
-//      storeId, keySchema, valueSchema, indexOrdinal, storeConf, hadoopConf)
-//
-//    // You may want to use the following higher-level code instead
-//    import java.util.UUID
-//    val queryRunId = UUID.randomUUID
-//    import org.apache.spark.sql.execution.streaming.state.StateStoreProviderId
-//    val storeProviderId = StateStoreProviderId(storeId, queryRunId)
-//    import org.apache.spark.sql.execution.streaming.state.StateStore
-//    val store = StateStore.get(
-//      storeProviderId,
-//      keySchema,
-//      valueSchema,
-//      indexOrdinal,
-//      version,
-//      storeConf,
-//      hadoopConf)
-//
-//    import org.apache.spark.sql.execution.streaming.state.UnsafeRowPair
-//    def formatRowPair(rowPair: UnsafeRowPair) = {
-//      s"(${rowPair.key.getLong(0)}, ${rowPair.value.getLong(0)})"
-//    }
-//    store.iterator.map(formatRowPair).foreach(println)
-//
-//    // WIP: Missing value (per window)
-//    def formatRowPair(rowPair: UnsafeRowPair) = {
-//      val window = rowPair.key.getStruct(0, 2)
-//      import scala.concurrent.duration._
-//      val begin = window.getLong(0).millis.toSeconds
-//      val end = window.getLong(1).millis.toSeconds
-//
-//      val value = rowPair.value.getStruct(0, 4)
-//      // input is (time, value, batch) all longs
-//      val t = value.getLong(1).millis.toSeconds
-//      val v = value.getLong(2)
-//      val b = value.getLong(3)
-//      s"(key: [$begin, $end], ($t, $v, $b))"
-//    }
-//    store.iterator.map(formatRowPair).foreach(println)
+//    import org.apache.spark.sql.streaming.{OutputMode, Trigger}
+//    import scala.concurrent.duration._
+//    val sq = signalCounter.
+//      writeStream.
+//      format("console").
+//      option("truncate", false).
+//      trigger(Trigger.ProcessingTime(10.seconds)).
+//      outputMode(OutputMode.Append).
+//      start
   }
 
 }

@@ -20,7 +20,7 @@ object StructuredTest {
     // Create DataFrame representing the stream of input lines from connection to localhost:9999
     val lines: DataFrame = spark.readStream
       .format("socket")
-      .option("host", "10.200.102.194")
+      .option("host", "10.200.102.192")
       .option("port", 9998)
       .load()
     // Split the lines into words
