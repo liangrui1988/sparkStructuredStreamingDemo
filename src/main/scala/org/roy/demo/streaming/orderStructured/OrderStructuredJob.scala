@@ -66,9 +66,10 @@ object StructuredStoreOrderState {
             var num = 0
             var money = 0.0
             seqs.foreach(e => {
-              if (stateMap.contains(e.orderId)) {
-                //新订单-旧订单，再进行+总合
+              if (stateMap.contains(e.orderId)) {  //新订单-旧订单，再进行+总合
                 money += e.money - stateMap.get(e.orderId).get
+              } else if (norderMap2.contains(e.orderId)) { //同一批次下，有重复订单的情况
+                money += e.money - norderMap2.get(e.orderId).get
               } else {
                 num += 1
                 money += e.money
@@ -81,7 +82,7 @@ object StructuredStoreOrderState {
             var norderMap2: Map[String, Double] = Map()
             var money = 0.0
             seqs.foreach(e => {
-              if (norderMap2.contains(e.orderId)) {
+              if (norderMap2.contains(e.orderId)) {//同一批次下，有重复订单的情况
                 money += e.money - norderMap2.get(e.orderId).get
               } else {
                 money += e.money
@@ -98,21 +99,17 @@ object StructuredStoreOrderState {
         }
     }
     import org.apache.spark.sql.functions.{lit, udf}
-
     val storeIdCode = (gid: String, index: Int) => {
       gid.split("_")(index)
     }
     val storeidUDF = udf(storeIdCode)
-    //    val otypeUDF = udf(storeIdCode)
     import spark.implicits._
     val resultDF = orderUpdates.withColumn("storeId", storeidUDF(orderUpdates("gId"), lit(0))).
       withColumn("otype", storeidUDF(orderUpdates("gId"), lit(1))).
       withColumn("orderDate", storeidUDF(orderUpdates("gId"), lit(2))).drop("gId").drop("timestamp")
-
     val checkpointLocation = "/scheckpoint/checkpoint-structuredStoreOrderState"
-    // Delete the checkpoint location from previous executions，socket需要删除目录
+    //socket 无法记录offset
     import java.nio.file.{FileSystems, Files}
-
     import scala.collection.JavaConverters._
     val path = FileSystems.getDefault.getPath(checkpointLocation)
     //        .sorted(Comparator.reverseOrder())
@@ -126,11 +123,13 @@ object StructuredStoreOrderState {
     val user = "root"
     val pwd = "candao"
     val writer = new JDBCSink(url, user, pwd)
+    resultDF.printSchema()
     val query =
       resultDF
         .writeStream
         .foreach(writer)
         .outputMode("update")
+        .option("checkpointLocation", checkpointLocation)
         .trigger(Trigger.ProcessingTime(5 * 1000))
         .start()
     query.awaitTermination()

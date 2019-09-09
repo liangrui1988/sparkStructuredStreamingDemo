@@ -27,14 +27,15 @@ class JDBCSink(url: String, user: String, pwd: String) extends ForeachWriter[Row
 
   def process(value: Row): Unit = {
     //storeName,provinceId,provinceName,cityId,cityName,
+    //    val sdate = value.getAs[String]("orderDate")
     val sql =
-      s"""
-         |INSERT INTO order_stream_sink (orderNum,orderMoney,expired,storeId,otype,orderDate)
-         |VALUES (${value.getAs[Int]("orderNum")},${value.getAs[Double]("orderMoney")},
-         |${value.getAs[Boolean]("expired")},${value.getAs[String]("storeId")},
-         |${value.getAs[Int]("otype")},${value.getAs[String]("orderDate")})
-         |ON DUPLICATE KEY UPDATE  orderNum=${value.getAs[Int]("orderNum")},
-         |orderMoney=${value.getAs[Double]("orderMoney")}
+    s"""
+       |INSERT INTO order_stream_sink (orderNum,orderMoney,expired,storeId,otype,orderDate)
+       |VALUES (${value.getAs[Int]("orderNum")},${value.getAs[Double]("orderMoney")},
+       |${value.getAs[Boolean]("expired")},${value.getAs[Int]("storeId")},
+       |${value.getAs[Int]("otype")},"${value.getAs[String]("orderDate")}")
+       |ON DUPLICATE KEY UPDATE  orderNum=${value.getAs[Int]("orderNum")},
+       |orderMoney=${value.getAs[Double]("orderMoney")}
       """.stripMargin
     println("sql==" + sql)
     statement.executeUpdate(sql)
