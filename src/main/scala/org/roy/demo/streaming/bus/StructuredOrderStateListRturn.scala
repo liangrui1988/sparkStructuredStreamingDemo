@@ -1,13 +1,13 @@
 package org.roy.demo.streaming.bus
 
 import java.sql.Timestamp
-
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.current_timestamp
 import org.apache.spark.sql.streaming._
 import streaming.StreamingExamples
 
+@deprecated
 object StructuredOrderStateListRturn {
   Logger.getLogger("org.apache.spark").setLevel(Level.WARN)
   StreamingExamples.setStreamingLogLevels()
@@ -76,7 +76,7 @@ object StructuredOrderStateListRturn {
     /**
       * 二次计算出门店的数据
       */
-    val storeUpdate = orderUpdates.groupByKey(order => order.storeId).statemapGroupsWithState[g1InfoStore, g1InfoStoreUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
+    val storeUpdate = orderUpdates.groupByKey(order => order.storeId).mapGroupsWithState[g1InfoStore, g1InfoStoreUpdate](GroupStateTimeout.ProcessingTimeTimeout) {
       case (storeId: String, events: Iterator[orderInfoStoreUpdate], state: GroupState[g1InfoStore]) =>
         // 如果时间超时，更新缓存
         if (state.hasTimedOut) {
@@ -104,8 +104,8 @@ object StructuredOrderStateListRturn {
         }
     }
     //门店统计好的数据在汇总
-//    storeUpdate.createOrReplaceTempView("update_tmp")
-//    spark.sql("select storeId,otype, count(1) num,sum(money) as moneys ,sum(oldMoney) as oldMoney  from update_tmp group by storeId,otype ")
+    //    storeUpdate.createOrReplaceTempView("update_tmp")
+    //    spark.sql("select storeId,otype, count(1) num,sum(money) as moneys ,sum(oldMoney) as oldMoney  from update_tmp group by storeId,otype ")
     val query = storeUpdate
       .writeStream
       .outputMode("update")
@@ -123,8 +123,9 @@ case class orderInfoStore(orderId: String, otype: Int, storeId: String, money: D
 case class orderInfoStoreUpdate(orderId: String, otype: Int, storeId: String, money: Double, oldMoney: Double, orderDate: String, timestamp: Timestamp,
                                 expired: Boolean)
 
-/** 第一个分组信息 */
-case class g1InfoStore(storeid: String,/* otype: Int,*/ num: Int, money: Double, timestamp: Timestamp)
 
-case class g1InfoStoreUpdate(storeid: String,/* otype: Int,*/ num: Int, money: Double, timestamp: Timestamp, expired: Boolean)
+/** 第一个分组信息 */
+case class g1InfoStore(storeid: String, /* otype: Int,*/ num: Int, money: Double, timestamp: Timestamp)
+
+case class g1InfoStoreUpdate(storeid: String, /* otype: Int,*/ num: Int, money: Double, timestamp: Timestamp, expired: Boolean)
 
